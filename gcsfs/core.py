@@ -33,6 +33,7 @@ import random
 
 from requests.exceptions import RequestException
 from .utils import HttpError, RateLimitException, is_retriable, read_block
+import ._credentials_serde as _credentials_serde
 
 PY2 = sys.version_info.major == 2
 
@@ -1213,10 +1214,28 @@ class GCSFileSystem(object):
     def __getstate__(self):
         d = self.__dict__.copy()
         d["_listing_cache"] = {}
+        # don't serialize session, recreate it when deserializing
+        d["session"] = None
+        # Credential tokens need some special serialization logic
+        token = d["token"]
+        if isinstance(token, google.auth.credentials.Credentials):
+            try:
+                serialized_cred = _credentials_serde.serialize(token)
+                d["_serialized_cred"] = serialized_cred
+                d["token"] = None
+            except NotImplementedError:
+                # if serializer can't serialize it, just pass
+                # hopefully it can get serialized later on
+                pass
         logger.debug("Serialize with state: %s", d)
         return d
 
     def __setstate__(self, state):
+        # deserialize Credentials if needed
+        if "_serialized_cred" in state:
+            serialized_cred = state["_serialized_cred"]
+            state["token"] = _credentials_serde.deserialize(serialized_cred)
+            del state["_serialized_cred"]
         self.__dict__.update(state)
         self.connect(self.token)
 
