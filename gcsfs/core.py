@@ -33,7 +33,7 @@ import random
 
 from requests.exceptions import RequestException
 from .utils import HttpError, RateLimitException, is_retriable, read_block
-import ._credentials_serde as _credentials_serde
+from . import _credentials_serde
 
 PY2 = sys.version_info.major == 2
 
