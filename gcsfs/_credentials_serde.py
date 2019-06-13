@@ -16,10 +16,13 @@ def _serialize_rsa_private_key(rsa_private_key):
     interface, which holds an instance of `google.auth.crypt.RSASigner`.
     For proper serialization, we need to handle de/serializing cryptography primitives
     from the `cryptography` package that are used in RSASigner.
+
+    Returns a serialized PEM bytestring or raises NotImplementedError if object
+    passed in isn't supported by this serialization method.
     """
     try:
-        from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKeyWithSerialization
         from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKeyWithSerialization
 
         if not isinstance(rsa_private_key, RSAPrivateKeyWithSerialization):
             # if not a serializable RSA key, then we're not serializing
@@ -38,20 +41,33 @@ def _serialize_rsa_private_key(rsa_private_key):
 def _deserialize_rsa_private_key(pem_key):
     """
     This is required for Credential objects using the `google.auth.credentials.Signed`
-    interface, which holds an instance of `google.auth.crypt.RSASigner`.
+    interface, which can hold an instance of `google.auth.crypt.RSASigner`.
     For proper serialization, we need to handle de/serializing cryptography primitives
     from the `cryptography` package that are used in RSASigner.
+
+    Returns a deserialized RSAPrivateKey or raises NotImplementedError if object
+    passed in isn't supported by this deserialization method.
+    Raises a TypeError if deserialization doesn't result in an RSAPrivateKey.
     """
     try:
         from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
         from google.auth.crypt import _cryptography_rsa
         
-        return serialization.load_pem_private_key(
+        rsa_private_key = serialization.load_pem_private_key(
             pem_key,
             password=None,
             # use Google auth library's suggested backend
             backend=_cryptography_rsa._BACKEND
         )
+        # must check we actually deserialized an RSAPrivateKey
+        if not isinstance(rsa_private_key, RSAPrivateKey):
+            msg = "Expecting RSAPrivateKey, got: {}".format(
+                # TODO: is getting type name compatible with all Python versions?
+                str(type(rsa_private_key).__name__)
+            )
+            raise TypeError(msg)
+        return rsa_private_key
     except ImportError:
         # if unable to import cryptography, then we're not serializing
          raise NotImplementedError
@@ -68,6 +84,8 @@ class CredentialsPickler(pickle.Pickler):
             pem_key = _serialize_rsa_private_key(obj)
             return ("RSAPrivateKeyWithSerialization", pem_key)
         except NotImplementedError:
+            # if serialization wasn't feasible, just return None
+            # this indicates that the object should be pickled conventionally
             return None
 
 class CredentialsUnpickler(pickle.Unpickler):
@@ -80,7 +98,8 @@ class CredentialsUnpickler(pickle.Unpickler):
         type_tag, pem_key = serialized
         if type_tag == "RSAPrivateKeyWithSerialization":
             try:
-                _deserialize_rsa_private_key(pem_key)
+                return _deserialize_rsa_private_key(pem_key)
+            # TODO: might need to catch other errors (TypeError, PEM deserialization, etc)
             except NotImplementedError:
                 msg = "Unable to deserialize: {}".format(str(type_tag))
                 raise pickle.UnpicklingError(msg)
@@ -105,6 +124,7 @@ def serialize(credentials):
         If credentials aren't supported by serialize()
     """
     try:
+        # TODO: Fernet key encryption mechanism
         f = io.BytesIO()
         CredentialsPickler(f).dump(credentials)
         return f.getvalue()
@@ -128,5 +148,6 @@ def deserialize(serialized_cred):
     `pickle.UnpicklingError`
         If unpickling fails
     """
+    # TODO: Fernet key decryption mechanism
     f = io.BytesIO(serialized_cred)
     return CredentialsUnpickler(f).load()
